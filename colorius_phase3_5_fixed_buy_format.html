@@ -1,0 +1,209 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Colorius Mobile – Phase 3.5</title>
+<style>
+body { margin:0; background:#0b0b0b; color:#eaeaea; font-family:monospace; }
+#hud {
+  position:fixed; top:10px; right:12px;
+  text-align:right; font-size:12px;
+  pointer-events:none;
+}
+#hud button { pointer-events:auto; }
+#prestigeBtn {
+  margin-top:6px; background:#111; border:1px solid #fff;
+  color:#fff; font-size:11px; padding:4px 6px; display:none;
+}
+#bossBar {
+  height:12px; background:#111; border:1px solid #333; margin-top:4px;
+}
+#bossFill {
+  height:100%; background:#c0392b; transition:width .08s linear;
+}
+#app { padding:12px; padding-top:90px; }
+.color {
+  margin-bottom:16px; padding-left:8px; border-left:4px solid; opacity:.35;
+}
+.color.unlocked { opacity:1; }
+.bar {
+  height:10px; background:#111; border:1px solid #333; margin-bottom:4px;
+}
+.fill { height:100%; background:currentColor; transition:width .05s linear; }
+button.buy {
+  width:100%; background:#111; border:1px solid currentColor;
+  color:inherit; font-size:11px; padding:6px;
+}
+</style>
+</head>
+<body>
+
+<div id="hud">
+  <div id="money">$0</div>
+  <div id="prestigeInfo">Prestige x1</div>
+  <button id="prestigeBtn">PRESTIGE</button>
+</div>
+
+<div id="app"></div>
+
+<script>
+const COLORS = [
+  { name:"RED", color:"#e74c3c", dmg:1, speed:1, baseCost:10 },
+  { name:"ORANGE", color:"#e67e22", dmg:10, speed:0.1, baseCost:100 },
+  { name:"YELLOW", color:"#f1c40f", dmg:100, speed:0.01, baseCost:1000 },
+  { name:"GREEN", color:"#2ecc71", dmg:1000, speed:0.001, baseCost:10000 }
+];
+
+let money = 10; // STARTING CASH
+let prestigeLevel = 0;
+let prestigeMult = 1;
+let nextPrestigeAt = 1e10;
+
+let bossMax = 100;
+let bossHP = bossMax;
+
+const COST_GROWTH = 1.6;
+
+const state = COLORS.map((c,i)=>({
+  unlocked:i===0,
+  bars:[{value:0}],
+  generators:0,
+  cost:c.baseCost
+}));
+
+function formatNum(n){
+  if(n < 1e6) return Math.floor(n).toLocaleString();
+  if(n < 1e9) return (n/1e6).toFixed(2)+"M";
+  if(n < 1e12) return (n/1e9).toFixed(2)+"B";
+  return (n/1e12).toFixed(2)+"T";
+}
+
+function resetGame(){
+  money = 10;
+  bossMax = 100 * Math.pow(5, prestigeLevel);
+  bossHP = bossMax;
+  state.forEach((c,i)=>{
+    c.unlocked = i===0;
+    c.bars = [{value:0}];
+    c.generators = 0;
+    c.cost = COLORS[i].baseCost;
+  });
+}
+
+function prestige(){
+  prestigeLevel++;
+  prestigeMult *= 10;
+  nextPrestigeAt *= 10;
+  resetGame();
+}
+
+document.getElementById("prestigeBtn").onclick = prestige;
+
+function buyGen(i){
+  const c = state[i];
+  if(!c.unlocked) return;
+
+  if(money >= c.cost){
+    money -= c.cost;
+    c.generators += 1;
+
+    // IMPORTANT FIX: bars only start ticking after first generator
+    if(c.generators === 1){
+      c.bars = [{value:0}];
+    }
+
+    c.cost = Math.floor(COLORS[i].baseCost * Math.pow(COST_GROWTH, c.generators));
+  }
+}
+
+function tick(dt){
+  state.forEach((c,idx)=>{
+    if(!c.unlocked || c.generators === 0) return;
+
+    c.bars[0].value += COLORS[idx].speed * dt;
+
+    for(let i=0;i<c.bars.length;i++){
+      if(c.bars[i].value >= 1){
+        c.bars[i].value -= 1;
+
+        if(!c.bars[i+1]) c.bars.push({value:0});
+        else c.bars[i+1].value += 1;
+
+        if(i === c.bars.length-1){
+          const dmg = COLORS[idx].dmg * c.generators;
+          bossHP -= dmg;
+          money += dmg * prestigeMult;
+
+          if(bossHP <= 0){
+            bossMax *= 5;
+            bossHP = bossMax;
+          }
+
+          if(c.bars.length >= 2 && idx < state.length-1){
+            state[idx+1].unlocked = true;
+          }
+        }
+      }
+    }
+  });
+
+  if(money >= nextPrestigeAt){
+    document.getElementById("prestigeBtn").style.display = "inline-block";
+  }
+}
+
+function render(){
+  document.getElementById("money").textContent = "$" + formatNum(money);
+  document.getElementById("prestigeInfo").textContent = "Prestige x" + prestigeMult;
+
+  const app = document.getElementById("app");
+  app.innerHTML = "";
+
+  const bossWrap = document.createElement("div");
+  bossWrap.innerHTML = `
+    <div>BOSS HP ${formatNum(bossHP)} / ${formatNum(bossMax)}</div>
+    <div id="bossBar"><div id="bossFill" style="width:${(bossHP/bossMax)*100}%"></div></div>
+  `;
+  app.appendChild(bossWrap);
+
+  state.forEach((c,i)=>{
+    if(!c.unlocked) return;
+
+    const el = document.createElement("div");
+    el.className = "color unlocked";
+    el.style.borderColor = COLORS[i].color;
+    el.style.color = COLORS[i].color;
+
+    el.innerHTML = `<div>${COLORS[i].name}</div>
+      <div style="font-size:11px">
+        Gen: ${c.generators} | Cost: ${formatNum(c.cost)}
+      </div>`;
+
+    c.bars.slice().reverse().forEach(b=>{
+      const bar=document.createElement("div"); bar.className="bar";
+      const f=document.createElement("div"); f.className="fill";
+      f.style.width=Math.min(b.value*100,100)+"%";
+      bar.appendChild(f); el.appendChild(bar);
+    });
+
+    const btn=document.createElement("button");
+    btn.className="buy";
+    btn.textContent="BUY GEN";
+    btn.onclick=()=>buyGen(i);
+    el.appendChild(btn);
+
+    app.appendChild(el);
+  });
+}
+
+let last = performance.now();
+function loop(now){
+  const dt=(now-last)/1000; last=now;
+  tick(dt); render();
+  requestAnimationFrame(loop);
+}
+loop(last);
+</script>
+</body>
+</html>
